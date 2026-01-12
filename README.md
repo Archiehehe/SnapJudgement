@@ -9,7 +9,7 @@ Rather than maximizing data volume, SnapJudgement optimizes for **clarity, seque
 🌐 Live app: https://snapjudgement.vercel.app/  
 📦 Repository: https://github.com/Archiehehe/SnapJudgement
 
----
+
 
 ## Why SnapJudgement Exists
 
