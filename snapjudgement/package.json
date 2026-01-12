@@ -12,7 +12,8 @@
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
     "recharts": "^2.10.0",
-    "lucide-react": "^0.294.0"
+    "lucide-react": "^0.294.0",
+    "yahoo-finance2": "^2.11.0"
   },
   "browserslist": {
     "production": [
