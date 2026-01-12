@@ -231,6 +231,7 @@ const getValuationInterpretation = (data) => {
 export default function SnapJudgement() {
   const [ticker, setTicker] = useState('');
   const [loading, setLoading] = useState(false);
+  const [chartLoading, setChartLoading] = useState(false); // Separate loading state for chart updates
   const [stockData, setStockData] = useState(null);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('1y');
@@ -239,12 +240,14 @@ export default function SnapJudgement() {
     const searchTicker = (tickerSymbol || ticker).toUpperCase().trim();
     if (!searchTicker) return;
     
-    setLoading(true);
-    setError(null);
-    // Only clear stock data if searching for a NEW stock, not when changing time range
-    if (!keepExistingData) {
+    // Use chartLoading for time range changes (keeps data visible), full loading for new ticker searches
+    if (keepExistingData) {
+      setChartLoading(true);
+    } else {
+      setLoading(true);
       setStockData(null);
     }
+    setError(null);
     setTicker(searchTicker);
     
     try {
@@ -285,6 +288,7 @@ export default function SnapJudgement() {
       setError(err.message || 'Failed to fetch stock data. Please try again.');
     } finally {
       setLoading(false);
+      setChartLoading(false);
     }
   }, [ticker]);
 
@@ -376,7 +380,7 @@ export default function SnapJudgement() {
           </div>
         )}
 
-        {/* Stock Data */}
+        {/* Stock Data - show even during chartLoading */}
         {stockData && !loading && (
           <div className="space-y-6 animate-fadeIn">
             {/* Header */}
@@ -505,7 +509,7 @@ export default function SnapJudgement() {
 
             {/* Chart */}
             <Section title="Price Behavior" icon={TrendingUp} delay={500}>
-              <div className="bg-gray-900/30 border border-gray-800/30 rounded-lg p-4">
+              <div className="bg-gray-900/30 border border-gray-800/30 rounded-lg p-4 relative">
                 <div className="flex gap-1 mb-4 flex-wrap">
                   {['1d', '5d', '1mo', '6mo', 'ytd', '1y', '5y'].map(range => (
                     <button
@@ -523,6 +527,11 @@ export default function SnapJudgement() {
                   ))}
                 </div>
                 <PriceChart data={stockData.priceHistory} />
+                {chartLoading && (
+                  <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded">
+                    <Loader2 size={24} className="animate-spin text-amber-500" />
+                  </div>
+                )}
               </div>
             </Section>
 
