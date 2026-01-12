@@ -1,4 +1,4 @@
-// Multi-provider Stock API - Complete metrics coverage
+// Multi-provider Stock API - Maximum coverage with free tier APIs
 
 const FINNHUB_KEY = 'd54rt91r01qojbih3rd0d54rt91r01qojbih3rdg';
 const FMP_KEY = 'kovea7vfsxUQRXVPdnMOXHHDy92S0TJm';
@@ -30,30 +30,36 @@ module.exports = async function handler(req, res) {
     priceHistory: []
   };
 
-  // Helper to safely fetch
-  async function safeFetch(url) {
+  // Helper to safely fetch with timeout
+  async function safeFetch(url, timeout = 5000) {
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-      if (res.ok) return await res.json();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      const response = await fetch(url, { 
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        const data = await response.json();
+        return data;
+      }
       return null;
     } catch (e) {
       return null;
     }
   }
 
-  // Run all fetches in parallel for speed
+  // Parallel fetch all data sources
   const [
     finnhubQuote,
     finnhubProfile,
     finnhubMetrics,
     finnhubRec,
     finnhubTarget,
+    fmpQuote,
     fmpProfile,
-    fmpRatios,
-    fmpKeyMetrics,
-    fmpIncome,
-    fmpCashFlow,
-    fmpGrowth,
+    yahooQuote,
     yahooChart
   ] = await Promise.all([
     safeFetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`),
@@ -61,17 +67,15 @@ module.exports = async function handler(req, res) {
     safeFetch(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${FINNHUB_KEY}`),
     safeFetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${FINNHUB_KEY}`),
     safeFetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/quote/${symbol}?apikey=${FMP_KEY}`),
     safeFetch(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${FMP_KEY}`),
-    safeFetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${symbol}?apikey=${FMP_KEY}`),
-    safeFetch(`https://financialmodelingprep.com/api/v3/key-metrics-ttm/${symbol}?apikey=${FMP_KEY}`),
-    safeFetch(`https://financialmodelingprep.com/api/v3/income-statement/${symbol}?period=annual&limit=2&apikey=${FMP_KEY}`),
-    safeFetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`),
-    safeFetch(`https://financialmodelingprep.com/api/v3/financial-growth/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`),
+    safeFetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`),
     safeFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`)
   ]);
 
-  // 1. FINNHUB Quote
-  if (finnhubQuote && finnhubQuote.c) {
+  // === FINNHUB ===
+  
+  if (finnhubQuote?.c > 0) {
     result.price.current = finnhubQuote.c;
     result.price.change = finnhubQuote.d;
     result.price.changePercent = finnhubQuote.dp ? finnhubQuote.dp / 100 : null;
@@ -81,8 +85,7 @@ module.exports = async function handler(req, res) {
     result.price.previousClose = finnhubQuote.pc;
   }
 
-  // 2. FINNHUB Profile
-  if (finnhubProfile && finnhubProfile.name) {
+  if (finnhubProfile?.name) {
     result.company.name = finnhubProfile.name;
     result.company.sector = finnhubProfile.finnhubIndustry;
     result.company.industry = finnhubProfile.finnhubIndustry;
@@ -92,26 +95,37 @@ module.exports = async function handler(req, res) {
     result.fundamentals.sharesOutstanding = finnhubProfile.shareOutstanding ? finnhubProfile.shareOutstanding * 1e6 : null;
   }
 
-  // 3. FINNHUB Metrics
-  if (finnhubMetrics && finnhubMetrics.metric) {
+  if (finnhubMetrics?.metric) {
     const m = finnhubMetrics.metric;
-    result.fundamentals.peRatio = m.peBasicExclExtraTTM || m.peTTM || null;
-    result.fundamentals.beta = m.beta || null;
-    result.fundamentals.priceToBook = m.pbQuarterly || m.pbAnnual || null;
-    result.fundamentals.priceToSales = m.psQuarterly || m.psAnnual || null;
+    result.fundamentals.peRatio = m.peBasicExclExtraTTM || m.peTTM;
+    result.fundamentals.beta = m.beta;
+    result.fundamentals.priceToBook = m.pbQuarterly || m.pbAnnual;
+    result.fundamentals.priceToSales = m.psQuarterly || m.psAnnual;
+    result.fundamentals.pegRatio = m.pegTTM;
     result.fundamentals.dividendYield = m.dividendYieldIndicatedAnnual ? m.dividendYieldIndicatedAnnual / 100 : null;
-    result.price.high52w = m['52WeekHigh'] || null;
-    result.price.low52w = m['52WeekLow'] || null;
+    result.price.high52w = m['52WeekHigh'];
+    result.price.low52w = m['52WeekLow'];
     result.financials.grossMargin = m.grossMarginTTM ? m.grossMarginTTM / 100 : null;
     result.financials.operatingMargin = m.operatingMarginTTM ? m.operatingMarginTTM / 100 : null;
     result.financials.profitMargin = m.netProfitMarginTTM ? m.netProfitMarginTTM / 100 : null;
-    result.financials.currentRatio = m.currentRatioQuarterly || null;
-    result.financials.debtToEquity = m.totalDebtToEquityQuarterly || null;
+    result.financials.returnOnEquity = m.roeTTM ? m.roeTTM / 100 : null;
+    result.financials.returnOnAssets = m.roaTTM ? m.roaTTM / 100 : null;
+    result.financials.currentRatio = m.currentRatioQuarterly;
+    result.financials.quickRatio = m.quickRatioQuarterly;
+    result.financials.debtToEquity = m.totalDebtToEquityQuarterly;
     result.financials.revenueGrowth = m.revenueGrowthTTMYoy ? m.revenueGrowthTTMYoy / 100 : null;
+    result.financials.freeCashFlow = m.freeCashFlowTTM;
+    result.financials.revenue = m.revenueTTM;
+    // EV metrics
+    result.fundamentals.evEbitda = m.evToEbitdaTTM || m['ev/ebitdaTTM'];
+    result.fundamentals.evRevenue = m.evToRevenueTTM || m['ev/salesTTM'];
+    // Forward P/E calculation from earnings estimates
+    if (m.epsGrowth5Y && result.fundamentals.peRatio) {
+      result.fundamentals.forwardPe = result.fundamentals.peRatio / (1 + (m.epsGrowth5Y / 100));
+    }
   }
 
-  // 4. FINNHUB Recommendations
-  if (finnhubRec && finnhubRec.length > 0) {
+  if (finnhubRec?.length > 0) {
     const latest = finnhubRec[0];
     result.analysts.numBuy = (latest.strongBuy || 0) + (latest.buy || 0);
     result.analysts.numHold = latest.hold || 0;
@@ -123,96 +137,95 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // 5. FINNHUB Price Target
-  if (finnhubTarget && finnhubTarget.targetMean) {
+  if (finnhubTarget?.targetMean) {
     result.analysts.targetPrice = finnhubTarget.targetMean;
     result.analysts.targetHigh = finnhubTarget.targetHigh;
     result.analysts.targetLow = finnhubTarget.targetLow;
   }
 
-  // 6. FMP Profile (IMPORTANT - has description)
-  if (fmpProfile && fmpProfile[0]) {
+  // === FMP (Free tier endpoints) ===
+  
+  // FMP Quote - has lots of useful data
+  if (fmpQuote?.[0]) {
+    const q = fmpQuote[0];
+    result.price.current = result.price.current || q.price;
+    result.price.change = result.price.change ?? q.change;
+    result.price.changePercent = result.price.changePercent ?? (q.changesPercentage ? q.changesPercentage / 100 : null);
+    result.price.dayHigh = result.price.dayHigh || q.dayHigh;
+    result.price.dayLow = result.price.dayLow || q.dayLow;
+    result.price.open = result.price.open || q.open;
+    result.price.previousClose = result.price.previousClose || q.previousClose;
+    result.price.high52w = result.price.high52w || q.yearHigh;
+    result.price.low52w = result.price.low52w || q.yearLow;
+    result.fundamentals.peRatio = result.fundamentals.peRatio || q.pe;
+    result.fundamentals.marketCap = result.fundamentals.marketCap || q.marketCap;
+    result.fundamentals.avgVolume = result.fundamentals.avgVolume || q.avgVolume;
+    result.fundamentals.sharesOutstanding = result.fundamentals.sharesOutstanding || q.sharesOutstanding;
+    // FMP has EPS - calculate forward P/E if we have earnings growth
+    if (q.eps && result.price.current && result.financials.revenueGrowth) {
+      // Estimate forward EPS using revenue growth as proxy for earnings growth
+      const growthRate = Math.min(result.financials.revenueGrowth, 0.5); // Cap at 50%
+      const forwardEps = q.eps * (1 + growthRate);
+      if (forwardEps > 0) {
+        result.fundamentals.forwardPe = result.fundamentals.forwardPe || (result.price.current / forwardEps);
+      }
+    }
+    // PEG calculation
+    if (result.fundamentals.peRatio && result.financials.revenueGrowth && result.financials.revenueGrowth > 0) {
+      result.fundamentals.pegRatio = result.fundamentals.pegRatio || (result.fundamentals.peRatio / (result.financials.revenueGrowth * 100));
+    }
+  }
+
+  // FMP Profile - description, employees
+  if (fmpProfile?.[0]) {
     const p = fmpProfile[0];
-    result.company.description = p.description || null;
+    result.company.description = p.description;
     result.company.name = result.company.name || p.companyName;
     result.company.sector = result.company.sector || p.sector;
     result.company.industry = p.industry || result.company.industry;
-    result.company.headquarters = p.city && p.country ? `${p.city}, ${p.country}` : result.company.headquarters;
+    result.company.headquarters = (p.city && p.country) ? `${p.city}, ${p.country}` : result.company.headquarters;
     result.company.website = result.company.website || p.website;
-    result.company.employees = p.fullTimeEmployees || null;
+    result.company.employees = p.fullTimeEmployees;
     result.fundamentals.marketCap = result.fundamentals.marketCap || p.mktCap;
     result.fundamentals.beta = result.fundamentals.beta || p.beta;
-    result.fundamentals.avgVolume = p.volAvg || null;
-    // FMP has live price too
-    if (!result.price.current) {
-      result.price.current = p.price;
-      result.price.change = p.changes;
+    result.fundamentals.avgVolume = result.fundamentals.avgVolume || p.volAvg;
+  }
+
+  // === YAHOO FINANCE ===
+  
+  // Yahoo Quote - lots of detailed metrics
+  const yQuote = yahooQuote?.quoteResponse?.result?.[0];
+  if (yQuote) {
+    result.price.current = result.price.current || yQuote.regularMarketPrice;
+    result.price.change = result.price.change ?? yQuote.regularMarketChange;
+    result.price.changePercent = result.price.changePercent ?? (yQuote.regularMarketChangePercent ? yQuote.regularMarketChangePercent / 100 : null);
+    result.price.dayHigh = result.price.dayHigh || yQuote.regularMarketDayHigh;
+    result.price.dayLow = result.price.dayLow || yQuote.regularMarketDayLow;
+    result.price.open = result.price.open || yQuote.regularMarketOpen;
+    result.price.previousClose = result.price.previousClose || yQuote.regularMarketPreviousClose;
+    result.price.high52w = result.price.high52w || yQuote.fiftyTwoWeekHigh;
+    result.price.low52w = result.price.low52w || yQuote.fiftyTwoWeekLow;
+    result.fundamentals.marketCap = result.fundamentals.marketCap || yQuote.marketCap;
+    result.fundamentals.peRatio = result.fundamentals.peRatio || yQuote.trailingPE;
+    result.fundamentals.forwardPe = result.fundamentals.forwardPe || yQuote.forwardPE;
+    result.fundamentals.priceToBook = result.fundamentals.priceToBook || yQuote.priceToBook;
+    result.fundamentals.avgVolume = result.fundamentals.avgVolume || yQuote.averageDailyVolume10Day;
+    result.fundamentals.sharesOutstanding = result.fundamentals.sharesOutstanding || yQuote.sharesOutstanding;
+    result.fundamentals.dividendYield = result.fundamentals.dividendYield || (yQuote.dividendYield ? yQuote.dividendYield / 100 : null);
+    result.company.name = result.company.name || yQuote.longName || yQuote.shortName;
+    // Yahoo has analyst targets!
+    result.analysts.targetPrice = result.analysts.targetPrice || yQuote.targetMeanPrice;
+    result.analysts.targetHigh = result.analysts.targetHigh || yQuote.targetHighPrice;
+    result.analysts.targetLow = result.analysts.targetLow || yQuote.targetLowPrice;
+    result.analysts.numberOfAnalysts = result.analysts.numberOfAnalysts || yQuote.numberOfAnalystOpinions;
+    // Yahoo has EPS and earnings dates
+    if (yQuote.epsTrailingTwelveMonths && yQuote.epsForward && result.price.current) {
+      result.fundamentals.forwardPe = result.fundamentals.forwardPe || (result.price.current / yQuote.epsForward);
     }
   }
 
-  // 7. FMP Ratios TTM (Forward P/E, more ratios)
-  if (fmpRatios && fmpRatios[0]) {
-    const r = fmpRatios[0];
-    result.fundamentals.peRatio = result.fundamentals.peRatio || r.peRatioTTM;
-    result.fundamentals.forwardPe = r.priceEarningsToGrowthRatioTTM ? result.fundamentals.peRatio / r.priceEarningsToGrowthRatioTTM : null; // Approximate
-    result.fundamentals.pegRatio = r.priceEarningsToGrowthRatioTTM || null;
-    result.fundamentals.priceToBook = result.fundamentals.priceToBook || r.priceToBookRatioTTM;
-    result.fundamentals.priceToSales = result.fundamentals.priceToSales || r.priceToSalesRatioTTM;
-    result.fundamentals.dividendYield = result.fundamentals.dividendYield || r.dividendYieldTTM;
-    result.financials.returnOnEquity = r.returnOnEquityTTM || null;
-    result.financials.returnOnAssets = r.returnOnAssetsTTM || null;
-    result.financials.grossMargin = result.financials.grossMargin || r.grossProfitMarginTTM;
-    result.financials.operatingMargin = result.financials.operatingMargin || r.operatingProfitMarginTTM;
-    result.financials.profitMargin = result.financials.profitMargin || r.netProfitMarginTTM;
-    result.financials.currentRatio = result.financials.currentRatio || r.currentRatioTTM;
-    result.financials.debtToEquity = result.financials.debtToEquity || r.debtEquityRatioTTM;
-    result.financials.quickRatio = r.quickRatioTTM || null;
-  }
-
-  // 8. FMP Key Metrics TTM (EV metrics)
-  if (fmpKeyMetrics && fmpKeyMetrics[0]) {
-    const k = fmpKeyMetrics[0];
-    result.fundamentals.evRevenue = k.enterpriseValueOverRevenueTTM || null;
-    result.fundamentals.evEbitda = k.evToOperatingCashFlowTTM || k.evToFreeCashFlowTTM || null;
-    result.fundamentals.pegRatio = result.fundamentals.pegRatio || k.pegRatioTTM;
-    result.financials.freeCashFlow = k.freeCashFlowPerShareTTM && result.fundamentals.sharesOutstanding 
-      ? k.freeCashFlowPerShareTTM * result.fundamentals.sharesOutstanding 
-      : null;
-  }
-
-  // 9. FMP Income Statement (Revenue)
-  if (fmpIncome && fmpIncome[0]) {
-    const inc = fmpIncome[0];
-    result.financials.revenue = inc.revenue || null;
-    
-    // Calculate revenue growth if we have 2 years
-    if (fmpIncome[1] && fmpIncome[1].revenue && inc.revenue) {
-      result.financials.revenueGrowth = result.financials.revenueGrowth || ((inc.revenue - fmpIncome[1].revenue) / fmpIncome[1].revenue);
-    }
-    
-    // Calculate margins from income statement if not already set
-    if (inc.revenue) {
-      result.financials.grossMargin = result.financials.grossMargin || (inc.grossProfit ? inc.grossProfit / inc.revenue : null);
-      result.financials.operatingMargin = result.financials.operatingMargin || (inc.operatingIncome ? inc.operatingIncome / inc.revenue : null);
-      result.financials.profitMargin = result.financials.profitMargin || (inc.netIncome ? inc.netIncome / inc.revenue : null);
-    }
-  }
-
-  // 10. FMP Cash Flow (Free Cash Flow, Operating Cash Flow)
-  if (fmpCashFlow && fmpCashFlow[0]) {
-    const cf = fmpCashFlow[0];
-    result.financials.freeCashFlow = result.financials.freeCashFlow || cf.freeCashFlow || null;
-    result.financials.operatingCashFlow = cf.operatingCashFlow || null;
-  }
-
-  // 11. FMP Growth (for accurate revenue growth)
-  if (fmpGrowth && fmpGrowth[0]) {
-    const g = fmpGrowth[0];
-    result.financials.revenueGrowth = result.financials.revenueGrowth || g.revenueGrowth;
-  }
-
-  // 12. Yahoo Chart - Price History
-  if (yahooChart && yahooChart.chart?.result?.[0]) {
+  // Yahoo Chart - price history
+  if (yahooChart?.chart?.result?.[0]) {
     const chartResult = yahooChart.chart.result[0];
     const timestamps = chartResult.timestamp || [];
     const closes = chartResult.indicators?.quote?.[0]?.close || [];
@@ -222,19 +235,31 @@ module.exports = async function handler(req, res) {
       price: closes[i]
     })).filter(d => d.price != null);
     
-    // Fallback price data from Yahoo
+    // Fallback price from chart meta
     if (!result.price.current && chartResult.meta) {
       const meta = chartResult.meta;
       result.price.current = meta.regularMarketPrice;
       result.price.previousClose = meta.previousClose || meta.chartPreviousClose;
-      result.price.high52w = result.price.high52w || meta.fiftyTwoWeekHigh;
-      result.price.low52w = result.price.low52w || meta.fiftyTwoWeekLow;
       result.company.name = result.company.name || meta.longName || meta.shortName;
       if (result.price.current && result.price.previousClose) {
         result.price.change = result.price.current - result.price.previousClose;
         result.price.changePercent = result.price.change / result.price.previousClose;
       }
     }
+  }
+
+  // === CALCULATED FIELDS ===
+  
+  // Calculate EV/Revenue and EV/EBITDA if we have the components
+  if (!result.fundamentals.evRevenue && result.fundamentals.marketCap && result.financials.revenue) {
+    // EV ≈ Market Cap (simplified, ignoring debt/cash)
+    result.fundamentals.evRevenue = result.fundamentals.marketCap / result.financials.revenue;
+  }
+  
+  // Calculate PEG if missing
+  if (!result.fundamentals.pegRatio && result.fundamentals.peRatio && result.financials.revenueGrowth > 0) {
+    // Using revenue growth as proxy for earnings growth
+    result.fundamentals.pegRatio = result.fundamentals.peRatio / (result.financials.revenueGrowth * 100);
   }
 
   // Set recommendation key based on score
