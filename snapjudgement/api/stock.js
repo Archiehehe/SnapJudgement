@@ -20,26 +20,23 @@ module.exports = async function handler(req, res) {
   
   const symbol = ticker.toUpperCase();
   
-  // Initialize result (Removed avgVolume)
+  // Initialize result
   const result = {
     company: { name: symbol, ticker: symbol, description: null, sector: null, industry: null, headquarters: null, website: null, employees: null },
     price: { current: null, change: null, changePercent: null, high52w: null, low52w: null, dayHigh: null, dayLow: null, open: null, previousClose: null },
-    fundamentals: { marketCap: null, beta: null, peRatio: null, forwardPe: null, pegRatio: null, priceToSales: null, priceToBook: null, evRevenue: null, evEbitda: null, dividendYield: null, sharesOutstanding: null },
+    fundamentals: { marketCap: null, beta: null, avgVolume: null, peRatio: null, forwardPe: null, pegRatio: null, priceToSales: null, priceToBook: null, evRevenue: null, evEbitda: null, dividendYield: null, sharesOutstanding: null },
     analysts: { targetPrice: null, targetHigh: null, targetLow: null, recommendationScore: null, recommendationKey: null, numBuy: 0, numHold: 0, numSell: 0, numberOfAnalysts: null },
     financials: { revenue: null, revenueGrowth: null, grossMargin: null, operatingMargin: null, profitMargin: null, returnOnEquity: null, returnOnAssets: null, freeCashFlow: null, operatingCashFlow: null, debtToEquity: null, currentRatio: null, quickRatio: null },
     priceHistory: []
   };
 
-  // Helper to safely fetch (Updated User-Agent for Yahoo Charts)
+  // Helper to safely fetch
   async function safeFetch(url, timeout = 5000) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       const response = await fetch(url, { 
-        headers: { 
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json'
-        },
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -152,7 +149,7 @@ module.exports = async function handler(req, res) {
     companyName = yQuote.longName || yQuote.shortName || companyName;
     result.company.name = result.company.name || companyName;
     result.price.current = result.price.current || yQuote.regularMarketPrice;
-    // Removed avgVolume assignment
+    result.fundamentals.avgVolume = yQuote.averageDailyVolume10Day || yQuote.averageDailyVolume3Month;
     result.fundamentals.forwardPe = yQuote.forwardPE;
     result.fundamentals.peRatio = result.fundamentals.peRatio || yQuote.trailingPE;
     result.fundamentals.priceToBook = result.fundamentals.priceToBook || yQuote.priceToBook;
@@ -170,7 +167,7 @@ module.exports = async function handler(req, res) {
   if (fmpQuote?.[0]) {
     const q = fmpQuote[0];
     result.price.current = result.price.current || q.price;
-    // Removed avgVolume assignment
+    result.fundamentals.avgVolume = result.fundamentals.avgVolume || q.avgVolume;
     result.fundamentals.peRatio = result.fundamentals.peRatio || q.pe;
     result.price.high52w = result.price.high52w || q.yearHigh;
     result.price.low52w = result.price.low52w || q.yearLow;
@@ -187,7 +184,7 @@ module.exports = async function handler(req, res) {
     result.company.headquarters = (p.city && p.country) ? `${p.city}, ${p.country}` : result.company.headquarters;
     result.company.website = result.company.website || p.website;
     result.company.employees = p.fullTimeEmployees;
-    // Removed avgVolume assignment
+    result.fundamentals.avgVolume = result.fundamentals.avgVolume || p.volAvg;
     result.fundamentals.beta = result.fundamentals.beta || p.beta;
   }
 
@@ -268,23 +265,26 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // === WIKIPEDIA for description (FIXED for Apple) ===
+  // === WIKIPEDIA for description ===
   if (companyName && companyName !== symbol && !result.company.description) {
     try {
       const searchName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Ltd\.?|LLC|Company|Co\.?)$/i, '').trim();
-      
-      // 1. Try "Name (company)" FIRST (Fixes Apple fruit issue)
-      let wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName + ' (company)')}`, 3000);
-      
-      // 2. Fallback to generic name if that failed
-      if (!wikiData?.extract) {
-         wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`, 3000);
-      }
-
+      const wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`, 3000);
       if (wikiData?.extract && wikiData.extract.length > 50) {
         result.company.description = wikiData.extract.substring(0, 500) + (wikiData.extract.length > 500 ? '...' : '');
       }
     } catch (e) {}
+    
+    // Fallback with (company)
+    if (!result.company.description) {
+      try {
+        const searchName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Ltd\.?|LLC|Company|Co\.?)$/i, '').trim();
+        const wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName + ' (company)')}`, 3000);
+        if (wikiData?.extract && wikiData.extract.length > 50) {
+          result.company.description = wikiData.extract.substring(0, 500) + (wikiData.extract.length > 500 ? '...' : '');
+        }
+      } catch (e) {}
+    }
   }
 
   // === CALCULATED FIELDS ===
