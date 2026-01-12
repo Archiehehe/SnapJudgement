@@ -1,4 +1,4 @@
-// Multi-provider Stock API with Finnhub + FMP + Yahoo fallbacks
+// Multi-provider Stock API - Complete metrics coverage
 
 const FINNHUB_KEY = 'd54rt91r01qojbih3rd0d54rt91r01qojbih3rdg';
 const FMP_KEY = 'kovea7vfsxUQRXVPdnMOXHHDy92S0TJm';
@@ -37,13 +37,40 @@ module.exports = async function handler(req, res) {
       if (res.ok) return await res.json();
       return null;
     } catch (e) {
-      console.error('Fetch error:', url, e.message);
       return null;
     }
   }
 
-  // 1. FINNHUB - Quote (real-time price)
-  const finnhubQuote = await safeFetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`);
+  // Run all fetches in parallel for speed
+  const [
+    finnhubQuote,
+    finnhubProfile,
+    finnhubMetrics,
+    finnhubRec,
+    finnhubTarget,
+    fmpProfile,
+    fmpRatios,
+    fmpKeyMetrics,
+    fmpIncome,
+    fmpCashFlow,
+    fmpGrowth,
+    yahooChart
+  ] = await Promise.all([
+    safeFetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    safeFetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    safeFetch(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${FINNHUB_KEY}`),
+    safeFetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    safeFetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${symbol}&token=${FINNHUB_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${FMP_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/ratios-ttm/${symbol}?apikey=${FMP_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/key-metrics-ttm/${symbol}?apikey=${FMP_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/income-statement/${symbol}?period=annual&limit=2&apikey=${FMP_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`),
+    safeFetch(`https://financialmodelingprep.com/api/v3/financial-growth/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`),
+    safeFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`)
+  ]);
+
+  // 1. FINNHUB Quote
   if (finnhubQuote && finnhubQuote.c) {
     result.price.current = finnhubQuote.c;
     result.price.change = finnhubQuote.d;
@@ -54,8 +81,7 @@ module.exports = async function handler(req, res) {
     result.price.previousClose = finnhubQuote.pc;
   }
 
-  // 2. FINNHUB - Company Profile
-  const finnhubProfile = await safeFetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${FINNHUB_KEY}`);
+  // 2. FINNHUB Profile
   if (finnhubProfile && finnhubProfile.name) {
     result.company.name = finnhubProfile.name;
     result.company.sector = finnhubProfile.finnhubIndustry;
@@ -66,8 +92,7 @@ module.exports = async function handler(req, res) {
     result.fundamentals.sharesOutstanding = finnhubProfile.shareOutstanding ? finnhubProfile.shareOutstanding * 1e6 : null;
   }
 
-  // 3. FINNHUB - Basic Financials/Metrics
-  const finnhubMetrics = await safeFetch(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${FINNHUB_KEY}`);
+  // 3. FINNHUB Metrics
   if (finnhubMetrics && finnhubMetrics.metric) {
     const m = finnhubMetrics.metric;
     result.fundamentals.peRatio = m.peBasicExclExtraTTM || m.peTTM || null;
@@ -77,8 +102,6 @@ module.exports = async function handler(req, res) {
     result.fundamentals.dividendYield = m.dividendYieldIndicatedAnnual ? m.dividendYieldIndicatedAnnual / 100 : null;
     result.price.high52w = m['52WeekHigh'] || null;
     result.price.low52w = m['52WeekLow'] || null;
-    result.financials.returnOnEquity = m.roeTTM ? m.roeTTM / 100 : null;
-    result.financials.returnOnAssets = m.roaTTM ? m.roaTTM / 100 : null;
     result.financials.grossMargin = m.grossMarginTTM ? m.grossMarginTTM / 100 : null;
     result.financials.operatingMargin = m.operatingMarginTTM ? m.operatingMarginTTM / 100 : null;
     result.financials.profitMargin = m.netProfitMarginTTM ? m.netProfitMarginTTM / 100 : null;
@@ -87,8 +110,7 @@ module.exports = async function handler(req, res) {
     result.financials.revenueGrowth = m.revenueGrowthTTMYoy ? m.revenueGrowthTTMYoy / 100 : null;
   }
 
-  // 4. FINNHUB - Analyst Recommendations
-  const finnhubRec = await safeFetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${symbol}&token=${FINNHUB_KEY}`);
+  // 4. FINNHUB Recommendations
   if (finnhubRec && finnhubRec.length > 0) {
     const latest = finnhubRec[0];
     result.analysts.numBuy = (latest.strongBuy || 0) + (latest.buy || 0);
@@ -96,71 +118,100 @@ module.exports = async function handler(req, res) {
     result.analysts.numSell = (latest.sell || 0) + (latest.strongSell || 0);
     const total = result.analysts.numBuy + result.analysts.numHold + result.analysts.numSell;
     if (total > 0) {
-      // Calculate score 1-5 (1=strong buy, 5=strong sell)
       result.analysts.recommendationScore = ((latest.strongBuy || 0) * 1 + (latest.buy || 0) * 2 + (latest.hold || 0) * 3 + (latest.sell || 0) * 4 + (latest.strongSell || 0) * 5) / total;
       result.analysts.numberOfAnalysts = total;
     }
   }
 
-  // 5. FINNHUB - Price Target
-  const finnhubTarget = await safeFetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${symbol}&token=${FINNHUB_KEY}`);
+  // 5. FINNHUB Price Target
   if (finnhubTarget && finnhubTarget.targetMean) {
     result.analysts.targetPrice = finnhubTarget.targetMean;
     result.analysts.targetHigh = finnhubTarget.targetHigh;
     result.analysts.targetLow = finnhubTarget.targetLow;
   }
 
-  // 6. FMP - Company Profile (for description and more details)
-  const fmpProfile = await safeFetch(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${FMP_KEY}`);
+  // 6. FMP Profile (IMPORTANT - has description)
   if (fmpProfile && fmpProfile[0]) {
     const p = fmpProfile[0];
     result.company.description = p.description || null;
     result.company.name = result.company.name || p.companyName;
     result.company.sector = result.company.sector || p.sector;
-    result.company.industry = result.company.industry || p.industry;
+    result.company.industry = p.industry || result.company.industry;
     result.company.headquarters = p.city && p.country ? `${p.city}, ${p.country}` : result.company.headquarters;
     result.company.website = result.company.website || p.website;
     result.company.employees = p.fullTimeEmployees || null;
     result.fundamentals.marketCap = result.fundamentals.marketCap || p.mktCap;
     result.fundamentals.beta = result.fundamentals.beta || p.beta;
     result.fundamentals.avgVolume = p.volAvg || null;
+    // FMP has live price too
+    if (!result.price.current) {
+      result.price.current = p.price;
+      result.price.change = p.changes;
+    }
   }
 
-  // 7. FMP - Key Metrics (fill any gaps)
-  const fmpMetrics = await safeFetch(`https://financialmodelingprep.com/api/v3/key-metrics-ttm/${symbol}?apikey=${FMP_KEY}`);
-  if (fmpMetrics && fmpMetrics[0]) {
-    const m = fmpMetrics[0];
-    result.fundamentals.peRatio = result.fundamentals.peRatio || m.peRatioTTM;
-    result.fundamentals.priceToBook = result.fundamentals.priceToBook || m.pbRatioTTM;
-    result.fundamentals.priceToSales = result.fundamentals.priceToSales || m.priceToSalesRatioTTM;
-    result.fundamentals.evRevenue = m.enterpriseValueOverRevenueTTM || null;
-    result.fundamentals.evEbitda = m.evToEbitdaTTM || null;
-    result.fundamentals.pegRatio = m.pegRatioTTM || null;
-    result.fundamentals.dividendYield = result.fundamentals.dividendYield || m.dividendYieldTTM;
-    result.financials.returnOnEquity = result.financials.returnOnEquity || m.roeTTM;
-    result.financials.returnOnAssets = result.financials.returnOnAssets || m.roaTTM;
-    result.financials.debtToEquity = result.financials.debtToEquity || m.debtToEquityTTM;
-    result.financials.currentRatio = result.financials.currentRatio || m.currentRatioTTM;
+  // 7. FMP Ratios TTM (Forward P/E, more ratios)
+  if (fmpRatios && fmpRatios[0]) {
+    const r = fmpRatios[0];
+    result.fundamentals.peRatio = result.fundamentals.peRatio || r.peRatioTTM;
+    result.fundamentals.forwardPe = r.priceEarningsToGrowthRatioTTM ? result.fundamentals.peRatio / r.priceEarningsToGrowthRatioTTM : null; // Approximate
+    result.fundamentals.pegRatio = r.priceEarningsToGrowthRatioTTM || null;
+    result.fundamentals.priceToBook = result.fundamentals.priceToBook || r.priceToBookRatioTTM;
+    result.fundamentals.priceToSales = result.fundamentals.priceToSales || r.priceToSalesRatioTTM;
+    result.fundamentals.dividendYield = result.fundamentals.dividendYield || r.dividendYieldTTM;
+    result.financials.returnOnEquity = r.returnOnEquityTTM || null;
+    result.financials.returnOnAssets = r.returnOnAssetsTTM || null;
+    result.financials.grossMargin = result.financials.grossMargin || r.grossProfitMarginTTM;
+    result.financials.operatingMargin = result.financials.operatingMargin || r.operatingProfitMarginTTM;
+    result.financials.profitMargin = result.financials.profitMargin || r.netProfitMarginTTM;
+    result.financials.currentRatio = result.financials.currentRatio || r.currentRatioTTM;
+    result.financials.debtToEquity = result.financials.debtToEquity || r.debtEquityRatioTTM;
+    result.financials.quickRatio = r.quickRatioTTM || null;
   }
 
-  // 8. FMP - Income Statement for revenue
-  const fmpIncome = await safeFetch(`https://financialmodelingprep.com/api/v3/income-statement/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`);
+  // 8. FMP Key Metrics TTM (EV metrics)
+  if (fmpKeyMetrics && fmpKeyMetrics[0]) {
+    const k = fmpKeyMetrics[0];
+    result.fundamentals.evRevenue = k.enterpriseValueOverRevenueTTM || null;
+    result.fundamentals.evEbitda = k.evToOperatingCashFlowTTM || k.evToFreeCashFlowTTM || null;
+    result.fundamentals.pegRatio = result.fundamentals.pegRatio || k.pegRatioTTM;
+    result.financials.freeCashFlow = k.freeCashFlowPerShareTTM && result.fundamentals.sharesOutstanding 
+      ? k.freeCashFlowPerShareTTM * result.fundamentals.sharesOutstanding 
+      : null;
+  }
+
+  // 9. FMP Income Statement (Revenue)
   if (fmpIncome && fmpIncome[0]) {
-    result.financials.revenue = fmpIncome[0].revenue || null;
-    result.financials.grossMargin = result.financials.grossMargin || (fmpIncome[0].grossProfit && fmpIncome[0].revenue ? fmpIncome[0].grossProfit / fmpIncome[0].revenue : null);
-    result.financials.operatingMargin = result.financials.operatingMargin || (fmpIncome[0].operatingIncome && fmpIncome[0].revenue ? fmpIncome[0].operatingIncome / fmpIncome[0].revenue : null);
-    result.financials.profitMargin = result.financials.profitMargin || (fmpIncome[0].netIncome && fmpIncome[0].revenue ? fmpIncome[0].netIncome / fmpIncome[0].revenue : null);
+    const inc = fmpIncome[0];
+    result.financials.revenue = inc.revenue || null;
+    
+    // Calculate revenue growth if we have 2 years
+    if (fmpIncome[1] && fmpIncome[1].revenue && inc.revenue) {
+      result.financials.revenueGrowth = result.financials.revenueGrowth || ((inc.revenue - fmpIncome[1].revenue) / fmpIncome[1].revenue);
+    }
+    
+    // Calculate margins from income statement if not already set
+    if (inc.revenue) {
+      result.financials.grossMargin = result.financials.grossMargin || (inc.grossProfit ? inc.grossProfit / inc.revenue : null);
+      result.financials.operatingMargin = result.financials.operatingMargin || (inc.operatingIncome ? inc.operatingIncome / inc.revenue : null);
+      result.financials.profitMargin = result.financials.profitMargin || (inc.netIncome ? inc.netIncome / inc.revenue : null);
+    }
   }
 
-  // 9. FMP - Cash Flow Statement
-  const fmpCashFlow = await safeFetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${symbol}?period=annual&limit=1&apikey=${FMP_KEY}`);
+  // 10. FMP Cash Flow (Free Cash Flow, Operating Cash Flow)
   if (fmpCashFlow && fmpCashFlow[0]) {
-    result.financials.freeCashFlow = fmpCashFlow[0].freeCashFlow || null;
-    result.financials.operatingCashFlow = fmpCashFlow[0].operatingCashFlow || null;
+    const cf = fmpCashFlow[0];
+    result.financials.freeCashFlow = result.financials.freeCashFlow || cf.freeCashFlow || null;
+    result.financials.operatingCashFlow = cf.operatingCashFlow || null;
   }
 
-  // 10. Yahoo Finance Chart - Price History
-  const yahooChart = await safeFetch(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`);
+  // 11. FMP Growth (for accurate revenue growth)
+  if (fmpGrowth && fmpGrowth[0]) {
+    const g = fmpGrowth[0];
+    result.financials.revenueGrowth = result.financials.revenueGrowth || g.revenueGrowth;
+  }
+
+  // 12. Yahoo Chart - Price History
   if (yahooChart && yahooChart.chart?.result?.[0]) {
     const chartResult = yahooChart.chart.result[0];
     const timestamps = chartResult.timestamp || [];
@@ -171,7 +222,7 @@ module.exports = async function handler(req, res) {
       price: closes[i]
     })).filter(d => d.price != null);
     
-    // Fallback price data from Yahoo if Finnhub failed
+    // Fallback price data from Yahoo
     if (!result.price.current && chartResult.meta) {
       const meta = chartResult.meta;
       result.price.current = meta.regularMarketPrice;
