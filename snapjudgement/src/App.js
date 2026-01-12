@@ -235,13 +235,16 @@ export default function SnapJudgement() {
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('1y');
 
-  const fetchStockData = useCallback(async (tickerSymbol, range = '1y') => {
+  const fetchStockData = useCallback(async (tickerSymbol, range = '1y', keepExistingData = false) => {
     const searchTicker = (tickerSymbol || ticker).toUpperCase().trim();
     if (!searchTicker) return;
     
     setLoading(true);
     setError(null);
-    setStockData(null);
+    // Only clear stock data if searching for a NEW stock, not when changing time range
+    if (!keepExistingData) {
+      setStockData(null);
+    }
     setTicker(searchTicker);
     
     try {
@@ -293,7 +296,7 @@ export default function SnapJudgement() {
   const handleTimeRangeChange = (range) => {
     setTimeRange(range);
     if (stockData?.company?.ticker) {
-      fetchStockData(stockData.company.ticker, range);
+      fetchStockData(stockData.company.ticker, range, true); // true = keep existing data while loading
     }
   };
 
@@ -507,6 +510,7 @@ export default function SnapJudgement() {
                   {['1d', '5d', '1mo', '6mo', 'ytd', '1y', '5y'].map(range => (
                     <button
                       key={range}
+                      type="button"
                       onClick={() => handleTimeRangeChange(range)}
                       className={`px-3 py-1 text-xs font-mono rounded transition-all ${
                         timeRange === range 
