@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
   const result = {
     company: { name: symbol, ticker: symbol, description: null, sector: null, industry: null, headquarters: null, website: null, employees: null },
     price: { current: null, change: null, changePercent: null, high52w: null, low52w: null, dayHigh: null, dayLow: null, open: null, previousClose: null },
-    fundamentals: { marketCap: null, beta: null, avgVolume: null, peRatio: null, forwardPe: null, pegRatio: null, priceToSales: null, priceToBook: null, evRevenue: null, evEbitda: null, dividendYield: null, sharesOutstanding: null },
+    fundamentals: { marketCap: null, beta: null, peRatio: null, forwardPe: null, pegRatio: null, priceToSales: null, priceToBook: null, evRevenue: null, evEbitda: null, dividendYield: null, sharesOutstanding: null },
     analysts: { targetPrice: null, targetHigh: null, targetLow: null, recommendationScore: null, recommendationKey: null, numBuy: 0, numHold: 0, numSell: 0, numberOfAnalysts: null },
     financials: { revenue: null, revenueGrowth: null, grossMargin: null, operatingMargin: null, profitMargin: null, returnOnEquity: null, returnOnAssets: null, freeCashFlow: null, operatingCashFlow: null, debtToEquity: null, currentRatio: null, quickRatio: null },
     priceHistory: []
@@ -149,7 +149,6 @@ module.exports = async function handler(req, res) {
     companyName = yQuote.longName || yQuote.shortName || companyName;
     result.company.name = result.company.name || companyName;
     result.price.current = result.price.current || yQuote.regularMarketPrice;
-    result.fundamentals.avgVolume = yQuote.averageDailyVolume10Day || yQuote.averageDailyVolume3Month;
     result.fundamentals.forwardPe = yQuote.forwardPE;
     result.fundamentals.peRatio = result.fundamentals.peRatio || yQuote.trailingPE;
     result.fundamentals.priceToBook = result.fundamentals.priceToBook || yQuote.priceToBook;
@@ -167,7 +166,6 @@ module.exports = async function handler(req, res) {
   if (fmpQuote?.[0]) {
     const q = fmpQuote[0];
     result.price.current = result.price.current || q.price;
-    result.fundamentals.avgVolume = result.fundamentals.avgVolume || q.avgVolume;
     result.fundamentals.peRatio = result.fundamentals.peRatio || q.pe;
     result.price.high52w = result.price.high52w || q.yearHigh;
     result.price.low52w = result.price.low52w || q.yearLow;
@@ -184,7 +182,6 @@ module.exports = async function handler(req, res) {
     result.company.headquarters = (p.city && p.country) ? `${p.city}, ${p.country}` : result.company.headquarters;
     result.company.website = result.company.website || p.website;
     result.company.employees = p.fullTimeEmployees;
-    result.fundamentals.avgVolume = result.fundamentals.avgVolume || p.volAvg;
     result.fundamentals.beta = result.fundamentals.beta || p.beta;
   }
 
@@ -192,7 +189,10 @@ module.exports = async function handler(req, res) {
   if (fmpKeyMetrics?.[0]) {
     const k = fmpKeyMetrics[0];
     result.fundamentals.evRevenue = k.enterpriseValueOverRevenueTTM;
-    result.fundamentals.evEbitda = k.evToOperatingCashFlowTTM; // Close proxy
+    result.fundamentals.evEbitda =
+  k.evToEBITDATTM ||
+  k.enterpriseValueOverEBITDATTM ||
+  null;
     result.fundamentals.pegRatio = result.fundamentals.pegRatio || k.pegRatioTTM;
     result.fundamentals.priceToBook = result.fundamentals.priceToBook || k.pbRatioTTM;
     result.fundamentals.priceToSales = result.fundamentals.priceToSales || k.priceToSalesRatioTTM;
@@ -220,6 +220,12 @@ module.exports = async function handler(req, res) {
   if (fmpIncome?.[0]) {
     const inc = fmpIncome[0];
     result.financials.revenue = inc.revenue;
+    // Yahoo fallback for revenue (TTM)
+result.financials.revenue =
+  result.financials.revenue ||
+  yahooQuote?.quoteResponse?.result?.[0]?.totalRevenue ||
+  null;
+
     
     // Calculate margins if not set
     if (inc.revenue > 0) {
@@ -239,6 +245,13 @@ module.exports = async function handler(req, res) {
     const cf = fmpCashFlow[0];
     result.financials.freeCashFlow = cf.freeCashFlow;
     result.financials.operatingCashFlow = cf.operatingCashFlow;
+ 
+
+result.financials.freeCashFlow =
+  result.financials.freeCashFlow || yQuote?.freeCashflow || null;
+
+result.financials.operatingCashFlow =
+  result.financials.operatingCashFlow || yQuote?.operatingCashflow || null;
   }
 
   // === FMP GROWTH ===
@@ -298,7 +311,8 @@ module.exports = async function handler(req, res) {
   
   // EV/Revenue if we have market cap and revenue
   if (!result.fundamentals.evRevenue && result.fundamentals.marketCap && result.financials.revenue) {
-    result.fundamentals.evRevenue = result.fundamentals.marketCap / result.financials.revenue;
+    result.fundamentals.evRevenue =
+  result.fundamentals.marketCap / result.financials.revenue;
   }
 
   // Recommendation key
