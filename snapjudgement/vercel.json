@@ -3,9 +3,9 @@
   "outputDirectory": "build",
   "framework": "create-react-app",
   "functions": {
-    "api/*.js": {
-      "memory": 1024,
-      "maxDuration": 30
+    "api/stock.js": {
+      "memory": 512,
+      "maxDuration": 10
     }
   },
   "rewrites": [
