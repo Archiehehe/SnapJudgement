@@ -265,26 +265,23 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // === WIKIPEDIA for description ===
+ // === WIKIPEDIA for description (FIXED for Apple) ===
   if (companyName && companyName !== symbol && !result.company.description) {
     try {
       const searchName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Ltd\.?|LLC|Company|Co\.?)$/i, '').trim();
-      const wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`, 3000);
+      
+      // 1. Try "Name (company)" FIRST (Fixes Apple fruit issue)
+      let wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName + ' (company)')}`, 3000);
+      
+      // 2. Fallback to generic name if that failed
+      if (!wikiData?.extract) {
+         wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`, 3000);
+      }
+
       if (wikiData?.extract && wikiData.extract.length > 50) {
         result.company.description = wikiData.extract.substring(0, 500) + (wikiData.extract.length > 500 ? '...' : '');
       }
     } catch (e) {}
-    
-    // Fallback with (company)
-    if (!result.company.description) {
-      try {
-        const searchName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Ltd\.?|LLC|Company|Co\.?)$/i, '').trim();
-        const wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName + ' (company)')}`, 3000);
-        if (wikiData?.extract && wikiData.extract.length > 50) {
-          result.company.description = wikiData.extract.substring(0, 500) + (wikiData.extract.length > 500 ? '...' : '');
-        }
-      } catch (e) {}
-    }
   }
 
   // === CALCULATED FIELDS ===
