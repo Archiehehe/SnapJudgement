@@ -65,6 +65,9 @@ This is a **learning and exploration tool**, not financial advice.
 
 ### 1. Enter a Ticker
 Users input a single stock ticker (e.g. `AAPL`, `DDOG`, `NVDA`).
+- Or browse **700+ companies** by sector for exploration
+
+The browse list is curated for fast discovery, while search supports any public ticker.
 
 ### 2. Receive a Structured Brief
 SnapJudgement generates a vertically ordered brief with clearly separated sections:
