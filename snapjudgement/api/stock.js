@@ -30,7 +30,7 @@ module.exports = async function handler(req, res) {
     priceHistory: []
   };
 
-  // Helper to safely fetch with robust headers for Yahoo/Wikipedia
+  // Helper to safely fetch (Updated User-Agent for Yahoo Charts)
   async function safeFetch(url, timeout = 5000) {
     try {
       const controller = new AbortController();
@@ -115,7 +115,6 @@ module.exports = async function handler(req, res) {
     result.fundamentals.priceToSales = m.psQuarterly || m.psAnnual;
     result.fundamentals.pegRatio = m.pegTTM;
     result.fundamentals.dividendYield = m.dividendYieldIndicatedAnnual ? m.dividendYieldIndicatedAnnual / 100 : null;
-    result.fundamentals.evEbitda = m.evToEbitdaTTM || null; // Fallback for metrics
     result.price.high52w = m['52WeekHigh'];
     result.price.low52w = m['52WeekLow'];
     result.financials.grossMargin = m.grossMarginTTM ? m.grossMarginTTM / 100 : null;
@@ -127,8 +126,6 @@ module.exports = async function handler(req, res) {
     result.financials.quickRatio = m.quickRatioQuarterly;
     result.financials.debtToEquity = m.totalDebtToEquityQuarterly;
     result.financials.revenueGrowth = m.revenueGrowthTTMYoy ? m.revenueGrowthTTMYoy / 100 : null;
-    // Fallback revenue
-    if (m.revenueTTM) result.financials.revenue = m.revenueTTM * 1e6;
   }
 
   if (finnhubRec?.length > 0) {
@@ -155,7 +152,7 @@ module.exports = async function handler(req, res) {
     companyName = yQuote.longName || yQuote.shortName || companyName;
     result.company.name = result.company.name || companyName;
     result.price.current = result.price.current || yQuote.regularMarketPrice;
-    // Removed avgVolume
+    // Removed avgVolume assignment
     result.fundamentals.forwardPe = yQuote.forwardPE;
     result.fundamentals.peRatio = result.fundamentals.peRatio || yQuote.trailingPE;
     result.fundamentals.priceToBook = result.fundamentals.priceToBook || yQuote.priceToBook;
@@ -163,7 +160,7 @@ module.exports = async function handler(req, res) {
     result.fundamentals.dividendYield = result.fundamentals.dividendYield || yQuote.trailingAnnualDividendYield;
     result.analysts.targetPrice = result.analysts.targetPrice || yQuote.targetMeanPrice;
     result.analysts.numberOfAnalysts = result.analysts.numberOfAnalysts || yQuote.numberOfAnalystOpinions;
-    
+    // Forward P/E from EPS forward
     if (!result.fundamentals.forwardPe && yQuote.epsForward && result.price.current) {
       result.fundamentals.forwardPe = result.price.current / yQuote.epsForward;
     }
@@ -173,7 +170,7 @@ module.exports = async function handler(req, res) {
   if (fmpQuote?.[0]) {
     const q = fmpQuote[0];
     result.price.current = result.price.current || q.price;
-    // Removed avgVolume
+    // Removed avgVolume assignment
     result.fundamentals.peRatio = result.fundamentals.peRatio || q.pe;
     result.price.high52w = result.price.high52w || q.yearHigh;
     result.price.low52w = result.price.low52w || q.yearLow;
@@ -190,15 +187,15 @@ module.exports = async function handler(req, res) {
     result.company.headquarters = (p.city && p.country) ? `${p.city}, ${p.country}` : result.company.headquarters;
     result.company.website = result.company.website || p.website;
     result.company.employees = p.fullTimeEmployees;
-    // Removed avgVolume
+    // Removed avgVolume assignment
     result.fundamentals.beta = result.fundamentals.beta || p.beta;
   }
 
   // === FMP KEY METRICS TTM (EV ratios!) ===
   if (fmpKeyMetrics?.[0]) {
     const k = fmpKeyMetrics[0];
-    result.fundamentals.evRevenue = k.enterpriseValueOverRevenueTTM || result.fundamentals.evRevenue;
-    result.fundamentals.evEbitda = k.evToOperatingCashFlowTTM || result.fundamentals.evEbitda; 
+    result.fundamentals.evRevenue = k.enterpriseValueOverRevenueTTM;
+    result.fundamentals.evEbitda = k.evToOperatingCashFlowTTM; // Close proxy
     result.fundamentals.pegRatio = result.fundamentals.pegRatio || k.pegRatioTTM;
     result.fundamentals.priceToBook = result.fundamentals.priceToBook || k.pbRatioTTM;
     result.fundamentals.priceToSales = result.fundamentals.priceToSales || k.priceToSalesRatioTTM;
@@ -225,7 +222,7 @@ module.exports = async function handler(req, res) {
   // === FMP INCOME STATEMENT (Revenue!) ===
   if (fmpIncome?.[0]) {
     const inc = fmpIncome[0];
-    result.financials.revenue = inc.revenue || result.financials.revenue;
+    result.financials.revenue = inc.revenue;
     
     // Calculate margins if not set
     if (inc.revenue > 0) {
@@ -243,7 +240,7 @@ module.exports = async function handler(req, res) {
   // === FMP CASH FLOW (FCF, Operating CF!) ===
   if (fmpCashFlow?.[0]) {
     const cf = fmpCashFlow[0];
-    result.financials.freeCashFlow = cf.freeCashFlow || result.financials.freeCashFlow;
+    result.financials.freeCashFlow = cf.freeCashFlow;
     result.financials.operatingCashFlow = cf.operatingCashFlow;
   }
 
@@ -254,7 +251,6 @@ module.exports = async function handler(req, res) {
   }
 
   // === YAHOO CHART ===
-  // With updated headers, this should now correctly populate
   if (yahooChart?.chart?.result?.[0]) {
     const chartResult = yahooChart.chart.result[0];
     const timestamps = chartResult.timestamp || [];
@@ -272,16 +268,15 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // === WIKIPEDIA for description ===
-  // Prioritize "Name (company)" to fix Apple fruit issue
+  // === WIKIPEDIA for description (FIXED for Apple) ===
   if (companyName && companyName !== symbol && !result.company.description) {
     try {
       const searchName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Ltd\.?|LLC|Company|Co\.?)$/i, '').trim();
       
-      // Try with (company) suffix FIRST (Robust Apple Fix)
+      // 1. Try "Name (company)" FIRST (Fixes Apple fruit issue)
       let wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName + ' (company)')}`, 3000);
       
-      // Fallback to generic name
+      // 2. Fallback to generic name if that failed
       if (!wikiData?.extract) {
          wikiData = await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`, 3000);
       }
@@ -292,7 +287,7 @@ module.exports = async function handler(req, res) {
     } catch (e) {}
   }
 
-  // === CALCULATED FIELDS & FALLBACKS ===
+  // === CALCULATED FIELDS ===
   
   // Forward P/E from trailing P/E and growth
   if (!result.fundamentals.forwardPe && result.fundamentals.peRatio && result.financials.revenueGrowth > 0) {
@@ -304,7 +299,7 @@ module.exports = async function handler(req, res) {
     result.fundamentals.pegRatio = result.fundamentals.peRatio / (result.financials.revenueGrowth * 100);
   }
   
-  // EV/Revenue Manual Calculation (Fixes missing metrics)
+  // EV/Revenue if we have market cap and revenue
   if (!result.fundamentals.evRevenue && result.fundamentals.marketCap && result.financials.revenue) {
     result.fundamentals.evRevenue = result.fundamentals.marketCap / result.financials.revenue;
   }
