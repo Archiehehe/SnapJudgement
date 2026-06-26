@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, TrendingUp, TrendingDown, DollarSign, Users, BarChart3, Activity, AlertCircle, Loader2, Zap, ExternalLink, ChevronDown } from 'lucide-react';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import STOCK_DATABASE from './stockData';
@@ -235,6 +235,8 @@ export default function SnapJudgement() {
   const [stockData, setStockData] = useState(null);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('1y');
+  const [queue, setQueue] = useState([]);
+  const autoRunRef = useRef(false);
 
   const fetchStockData = useCallback(async (tickerSymbol, range = '1y', keepExistingData = false) => {
     const searchTicker = (tickerSymbol || ticker).toUpperCase().trim();
@@ -292,6 +294,34 @@ export default function SnapJudgement() {
     }
   }, [ticker]);
 
+  // On mount, read ticker/tickers from URL search params and auto-run
+  const fetchStockDataRef = useRef(fetchStockData);
+  useEffect(() => { fetchStockDataRef.current = fetchStockData; });
+  useEffect(() => {
+    if (autoRunRef.current) return;
+    autoRunRef.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const tickerParam = params.get('ticker');
+    const tickersParam = params.get('tickers');
+
+    let tickers = [];
+    if (tickersParam) {
+      tickers = [...new Set(tickersParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean))];
+    } else if (tickerParam) {
+      const t = tickerParam.trim().toUpperCase();
+      if (t) tickers = [t];
+    }
+
+    if (tickers.length > 0) {
+      setTicker(tickers[0]);
+      if (tickers.length > 1) {
+        setQueue(tickers);
+      }
+      fetchStockDataRef.current(tickers[0], '1y');
+    }
+  }, []);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     fetchStockData(ticker, timeRange);
@@ -345,6 +375,28 @@ export default function SnapJudgement() {
             </button>
           </div>
         </form>
+
+        {/* Linked tickers queue */}
+        {queue.length > 1 && (
+          <div className="mb-4">
+            <div className="text-xs text-gray-500 font-mono mb-2">Linked tickers</div>
+            <div className="flex flex-wrap gap-2">
+              {queue.map(t => (
+                <button
+                  key={t}
+                  onClick={() => fetchStockData(t, timeRange)}
+                  className={`px-3 py-1.5 text-xs font-mono rounded transition-all ${
+                    ticker === t
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'text-gray-500 hover:text-gray-300 bg-gray-900/50 border border-gray-800/50 hover:border-gray-700'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Stock Browser */}
         <StockBrowser onSelect={(t) => fetchStockData(t, timeRange)} currentTicker={stockData?.company?.ticker} />
